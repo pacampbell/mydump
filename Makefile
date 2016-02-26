@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Werror
+CFLAGS = -Wall -Werror -DCOLOR
 BIN = mydump
 LIBS =
 
@@ -7,7 +7,7 @@ SRC = $(wildcard *.c)
 
 all: $(BIN)
 
-debug: CFLAGS += -g -DDEBUG -DCOLOR
+debug: CFLAGS += -g -DDEBUG
 debug: $(BIN)
 
 $(BIN): $(SRC)

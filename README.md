@@ -21,3 +21,8 @@ mydump [-i interface] [-r file] [-s string] expression
 
 Navigate to this directory and type **make**. If you want to build with debug
 logging and debugging symbols type **make debug**.
+
+# Note
+
+If you are using a shell that is unable to render ANSI colors, edit the **Makefile**
+so that the **CFLAGS** variable no longer defined **-DCOLOR**.

@@ -12,6 +12,7 @@ int main(int argc, char *argv[]) {
     char *inputfile = NULL;
     char *searchstring = NULL;
 
+    // Iterate through the command line arguments
     while ((opt = getopt(argc, argv, "hi:r:s:")) != -1) {
         switch (opt) {
             case 'i':
@@ -38,10 +39,17 @@ int main(int argc, char *argv[]) {
         USAGE(argv[0], stderr, EXIT_FAILURE);
     }
 
-    // Check to see if we have an expression
+    // Make sure if a bpf filter was provided, we only have one
     if (optind < argc && (argc - optind) == 1) {
-        expression = optarg;
+        expression = argv[optind];
+    } else {
+        error("Too many positional arguments provided.\n");
+        error("Expected 1 BPF filter but found %d positional argument(s).\n", argc - optind);
     }
+
+    // Make sure the interface exists
+
+    // Do some basic logging for debug
     debug("Search String: %s\n", searchstring);
     debug("Expression: %s\n", expression);
 
