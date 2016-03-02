@@ -2,6 +2,10 @@
 #define MYDUMP_H
 #include <stdio.h>
 
+#define TYPE_ICMP 1
+#define TYPE_TCP 6
+#define TYPE_UDP 17
+
 #define USAGE(name, stream, exit_code) do {                                    \
     fprintf((stream),                                                          \
     "%s [-i interface] [-r file] [-s string] expression"                       \
@@ -26,5 +30,10 @@
     , (name), (name));                                                         \
     exit((exit_code));                                                         \
 } while(0)
+
+#define CHECK_FLAG(value, flag)     \
+({                                  \
+    ((value) & flag) == (flag);     \
+})
 
 #endif

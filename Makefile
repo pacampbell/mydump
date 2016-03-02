@@ -1,11 +1,11 @@
 CC = gcc
 CFLAGS = -Wall -Werror -DCOLOR
 BIN = mydump
-LIBS =
+LIBS = -lpcap
 
 SRC = $(wildcard *.c)
 
-.DEFAULT_GOAL := help
+# .DEFAULT_GOAL := help
 
 all: $(BIN) ## Generates all programs that this makefile can generate.
 

@@ -1,4 +1,4 @@
-# CSE508 HW&#35;2
+# CSE508 HW&#35;2 mydump
 
 Passive network monitoring tool similar to tcpdump.
 
@@ -19,8 +19,8 @@ mydump [-i interface] [-r file] [-s string] expression
 
 # Build
 
-Navigate to this directory and type **make**. If you want to build with debug
-logging and debugging symbols type **make debug**.
+Typing `make help` will list all targets the **Makefile** can build.
+To build all binaries in the **Makefile** type `make`.
 
 # Note
 
