@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <ifaddrs.h>
 #include <time.h>
+#include <signal.h>
 
 #include <pcap/pcap.h>
 #include <sys/socket.h>
@@ -22,7 +23,6 @@
 #include "debug.h"
 
 static void sniffinterface(pcap_t *handle, char *searchstring);
-static void readdump();
 static bool interfaceexists(const char *interface);
 static void callback(u_char *args, const struct pcap_pkthdr* pkthdr, const u_char* packet);
 static void printeth(const u_char *packet, size_t length);
@@ -31,6 +31,18 @@ static void printudp(const u_char* packet, size_t length);
 static void printtcp(const u_char* packet, size_t length);
 static void printicmp(const u_char* packet, size_t length);
 static void printother(const u_char* packet, size_t length);
+static void printpayload(const u_char* packet, size_t length);
+static bool searchpacket(const u_char *packet, size_t length, char *search);
+
+// static p
+
+static pcap_t *handle = NULL;
+
+void exithandler(int dummy) {
+    if (handle != NULL) {
+        pcap_breakloop(handle);
+    }
+}
 
 int main(int argc, char *argv[]) {
     int opt;
@@ -69,6 +81,8 @@ int main(int argc, char *argv[]) {
     // Make sure if a bpf filter was provided, we only have one
     if (optind < argc && (argc - optind) == 1) {
         expression = argv[optind];
+    } else if (optind == argc && (argc - optind) == 0) {
+        // NOP
     } else {
         error("Too many positional arguments provided.\n");
         error("Expected 1 BPF filter but found %d positional argument(s).\n", argc - optind);
@@ -79,16 +93,18 @@ int main(int argc, char *argv[]) {
     debug("Search String: %s\n", searchstring);
     debug("Expression: %s\n", expression);
 
+    // Set up to capture
+    char errbuf[PCAP_ERRBUF_SIZE];
+    bpf_u_int32 mask = 0;   /* The netmask of our sniffing device */
+    bpf_u_int32 net = 0;    /* The IP of our sniffing device */
+    struct bpf_program filter;
+    // Zero out the struct
+    memset(&filter, 0, sizeof(struct bpf_program));
+
     // Figure out to read the file or read the interface
     if (inputfile == NULL) {
-        pcap_t *handle;
-        char errbuf[PCAP_ERRBUF_SIZE];
-        bpf_u_int32 mask;   /* The netmask of our sniffing device */
-        bpf_u_int32 net;    /* The IP of our sniffing device */
-        // struct bpf_program fp;
-
         if (interface == NULL) {
-            // No intvoiderface provided; just pick one
+            // No interface provided; just pick one
             if ((interface = pcap_lookupdev(errbuf)) == NULL) {
                 error("%s\n", errbuf);
                 return EXIT_FAILURE;
@@ -96,6 +112,7 @@ int main(int argc, char *argv[]) {
                 info("Bounded to the default interface %s\n", interface);
             }
         } else {
+            // User provided an interface, see if it exists
             if (!interfaceexists(interface)) {
                 error("The interface %s does not exist.\n", interface);
                 return EXIT_FAILURE;
@@ -113,21 +130,39 @@ int main(int argc, char *argv[]) {
             error("%s\n", errbuf);
             return EXIT_FAILURE;
         }
-
-        // If theres a filter, make the filter
-        if (expression != NULL) {
-            // TODO: Make the filter
-            // TODO: Apply the filter
-        }
-
-        // Sniff on the interface
-        sniffinterface(handle, searchstring);
-
-        // Close the session
-        pcap_close(handle);
     } else {
-        readdump();
+        // User gave us an input file. Try to open it.
+        if ((handle = pcap_open_offline(inputfile, errbuf)) == NULL) {
+            error("Unable to read the offline dump %s: %s\n", inputfile, errbuf);
+            return EXIT_FAILURE;
+        }
     }
+
+    // If theres a filter, make compile the filter and apply it
+    if (expression != NULL) {
+        // Compile the filter
+        if (pcap_compile(handle, &filter, expression, 0, net) == -1) {
+            error("Couldn't parse the filter %s: %s\n", expression, pcap_geterr(handle));
+            return EXIT_FAILURE;
+        }
+        // Apply the filter
+        if (pcap_setfilter(handle, &filter) == -1) {
+            error("Couldn't apply the filter %s: %s\n", expression, pcap_geterr(handle));
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Start sniffing
+    sniffinterface(handle, searchstring);
+
+    // Close the session
+    printf("\n");
+    if (inputfile != NULL) {
+        info("Ending parsing of input file %s...\n", inputfile);
+    } else {
+        info("Ending listening session on %s...\n", interface);
+    }
+    pcap_close(handle);
 
     return EXIT_SUCCESS;
 }
@@ -135,10 +170,11 @@ int main(int argc, char *argv[]) {
 static void sniffinterface(pcap_t *handle, char *searchstring) {
     if (handle == NULL)
         return;
-    pcap_loop(handle, -1, callback, (u_char*)searchstring);
-}
+    // We got this far, set up the signal handler
+    signal(SIGINT, exithandler);
 
-static void readdump() {
+    // Now start reading the handle
+    pcap_loop(handle, -1, callback, (u_char*)searchstring);
 }
 
 static bool interfaceexists(const char *interface) {
@@ -167,6 +203,12 @@ static bool interfaceexists(const char *interface) {
 }
 
 static void callback(u_char *args, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
+    if (args != NULL) {
+        if (!searchpacket(packet, pkthdr->len, (char*)args)) {
+            // Didn't find the search string, exit
+            return;
+        }
+    }
     // source and destination IP
     // address and port, protocol (TCP, UDP, ICMP, OTHER), and the raw content of the
     // application-layer packet payload
@@ -192,15 +234,6 @@ static void callback(u_char *args, const struct pcap_pkthdr* pkthdr, const u_cha
             printother(packet, pkthdr->len);
             break;
     }
-
-
-    // if (args != NULL) {
-    //     if (strstr((char*)packet, (char*)args) == NULL) {
-    //         return;
-    //     }
-    // }
-    // // Print out the information about the packet
-    // printf("Jacked a packet with length of [%d]\n", pkthdr->len);
 }
 
 static void printeth(const u_char *packet, size_t length) {
@@ -229,6 +262,14 @@ static void printeth(const u_char *packet, size_t length) {
 }
 
 static size_t printip(const u_char *packet, size_t length, char *srcip, char *destip) {
+    /*
+    IP Layers
+    +----------+
+    | Ethernet |
+    +----------+
+    | IP       |
+    +----------+
+    */
     struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
     struct sockaddr_in source, dest;
     // Zero out the structs
@@ -239,22 +280,39 @@ static size_t printip(const u_char *packet, size_t length, char *srcip, char *de
     dest.sin_addr.s_addr = iph->daddr;
     strcpy(srcip, inet_ntoa(source.sin_addr));
     strcpy(destip, inet_ntoa(dest.sin_addr));
+    // IHL is the number of 32-bit words which make up the header
+    // num words * (bytes / word) = total number of bytes
     return iph->ihl * 4;
 }
 
 static void printudp(const u_char* packet, size_t length) {
     char src[32], dst[32];
-    size_t iphdrlen;
+    size_t iphdrlen, payloadlen;
     printeth(packet, length);
     iphdrlen = printip(packet, length, src, dst);
     // Now do Specific udp stuff
     struct udphdr *udph = (struct udphdr*)(packet + iphdrlen  + sizeof(struct ethhdr));
     printf("%15s:%5u > %15s:%5u UDP\n", src, udph->source, dst, udph->dest);
+    // Now dump the payload
+    /*
+    UDP Layers
+    +----------+
+    | Ethernet |
+    +----------+
+    | IP       |
+    +----------+
+    | UDP      |
+    +----------+
+    | payload  |
+    +----------+
+    */
+    payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct udphdr);
+    printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct udphdr), payloadlen);
 }
 
 static void printtcp(const u_char* packet, size_t length) {
     char src[32], dst[32];
-    size_t iphdrlen;
+    size_t iphdrlen, hdrlen, payloadlen;
     // Print out eth and ip headers
     printeth(packet, length);
     iphdrlen = printip(packet, length, src, dst);
@@ -262,14 +320,26 @@ static void printtcp(const u_char* packet, size_t length) {
     struct tcphdr *tcph = (struct tcphdr*)(packet + iphdrlen + sizeof(struct ethhdr));
     // Now do Specific tcp stuff
     printf("%15s:%5u > %15s:%5u TCP\n", src, tcph->source, dst, tcph->dest);
+    // Calculate the size of the full heade to reach the payload
+    hdrlen = sizeof(struct ethhdr) + iphdrlen + tcph->doff * 4;
+    // Now dump the payload
+    payloadlen = length - hdrlen;
+    if (payloadlen > 0) {
+        printpayload(packet + hdrlen, payloadlen);
+    }
 }
 
 static void printicmp(const u_char* packet, size_t length) {
     char src[32], dst[32];
+    size_t iphdrlen, payloadlen;
     printeth(packet, length);
-    printip(packet, length, src, dst);
+    // Print the ip layer, and get its size
+    iphdrlen = printip(packet, length, src, dst);
     // Now do Specific ICMP stuff
     printf("%21s > %21s ICMP\n", src, dst);
+    // Calculate the size of the full header
+    payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr);
+    printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr), payloadlen);
 }
 
 static void printother(const u_char* packet, size_t length) {
@@ -278,4 +348,87 @@ static void printother(const u_char* packet, size_t length) {
     printip(packet, length, src, dst);
     // Now do Specific other stuff
     printf("%21s > %21s OTHER\n", src, dst);
+}
+
+static void printpayloadrow(unsigned char *buffer, size_t count) {
+    int i;
+    // Print the packets we have
+    for (i = 0; i < count; ++i) {
+        printf("%02x ", buffer[i]);
+    }
+    // If there is any other packets which don't exist print spaces
+    for (; i < 16; ++i) {
+        printf("   ");
+    }
+    // Print some space
+    printf("  ");
+    // Now print out the ascii value if possible
+    for (i = 0; i < count; ++i) {
+        char c = buffer[i];
+        if (c < ' ' || c > '~') {
+            c = '.';
+        }
+        printf("%c", c);
+    }
+    // Finally print a new line
+    printf("\n");
+}
+
+static void printpayload(const u_char* packet, size_t length) {
+    int i;
+    size_t count;
+    unsigned char buffer[16];
+    memset(buffer, 0, 16);
+    for (i = 0, count = 0; i < length; ++i, ++count) {
+        if (count == 16) {
+            printpayloadrow(buffer, count);
+            // Reset the counter
+            count = 0;
+            // Zero out the buffer
+            memset(buffer, 0, 16);
+        }
+        buffer[count] = packet[i];
+    }
+    // If there was anything left over, print it out
+    if (count > 0)
+        printpayloadrow(buffer, count);
+}
+
+static bool searchpacket(const u_char *packet, size_t length, char *search) {
+    bool found = false;
+    struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
+    size_t hdrlen = (iph->ihl * 4) + sizeof(struct ethhdr);
+    // Make header variables to calculate sizes
+    struct tcphdr *tcphdr = NULL;
+    // Figure out protocol sensitive information
+    switch (iph->protocol) {
+        case TYPE_ICMP:
+            hdrlen += sizeof(struct icmphdr);
+            break;
+        case TYPE_UDP:
+            /* Nothing else needs to be added to the length */
+            hdrlen += sizeof(struct udphdr);
+            break;
+        case TYPE_TCP:
+            tcphdr = (struct tcphdr*)(packet + hdrlen);
+            hdrlen += tcphdr->doff * 4;
+            break;
+        default:
+            hdrlen = 0;
+            return false;
+    }
+
+    // Check to make sure theres anything left in the packet, otherwise it may be empty
+    if (length - hdrlen == 0) {
+        debug("No payload to scan, skipping\n");
+        return found;
+    } else {
+        debug("Payload length is: %zu\n", length - hdrlen);
+    }
+
+    // Finally search for the payload string
+    if (strstr((char*)(packet + hdrlen), search) != NULL) {
+        found = true;
+    }
+    return found;
 }

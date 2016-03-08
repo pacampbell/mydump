@@ -1,3 +1,4 @@
 mydump
 *.o
 a.out
+*.pcap

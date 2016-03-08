@@ -2,8 +2,9 @@ CC = gcc
 CFLAGS = -Wall -Werror -DCOLOR
 BIN = mydump
 LIBS = -lpcap
-
 SRC = $(wildcard *.c)
+
+.PHONY: all debug clean help
 
 # .DEFAULT_GOAL := help
 
@@ -18,6 +19,5 @@ mydump: $(SRC) ## Generates the mydump program
 clean: ## Removes all source binaries and object files.
 	rm -f $(BIN) *.o
 
-.PHONY: help
 help: ## Generates this help menu.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
