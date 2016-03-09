@@ -396,6 +396,7 @@ static void printpayload(const u_char* packet, size_t length) {
 
 static bool searchpacket(const u_char *packet, size_t length, char *search) {
     bool found = false;
+    size_t payloadlen;
     struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
     size_t hdrlen = (iph->ihl * 4) + sizeof(struct ethhdr);
     // Make header variables to calculate sizes
@@ -411,23 +412,29 @@ static bool searchpacket(const u_char *packet, size_t length, char *search) {
             break;
         case TYPE_TCP:
             tcphdr = (struct tcphdr*)(packet + hdrlen);
-            hdrlen += tcphdr->doff * 4;
+            hdrlen += (tcphdr->doff * 4);
             break;
         default:
-            hdrlen = 0;
-            return false;
+            /* Just start scanning bytes from here */
+            break;
     }
-
+    // Calculate the size of the payload
+    payloadlen = length - hdrlen;
     // Check to make sure theres anything left in the packet, otherwise it may be empty
-    if (length - hdrlen == 0) {
-        debug("No payload to scan, skipping\n");
+    if (payloadlen == 0) {
+        // debug("No payload to scan, skipping\n");
         return found;
     } else {
-        debug("Payload length is: %zu\n", length - hdrlen);
+        debug("Payload length is: %zu\n", payloadlen);
     }
 
     // Finally search for the payload string
-    if (strstr((char*)(packet + hdrlen), search) != NULL) {
+    // 1500 is MTU for ETH, and 1 to null terminate
+    unsigned char buffer[payloadlen + 2];
+    memcpy(buffer, packet + hdrlen, payloadlen);
+    // NULL terminate the buffer
+    buffer[payloadlen + 1] = 0;
+    if (strstr((char*)buffer, search) != NULL) {
         found = true;
     }
     return found;
