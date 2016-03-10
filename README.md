@@ -25,21 +25,21 @@ payload.
 
 -h                               Displays this help menu.
 
--i                               Listen on network device <interface>
+-i                               Listen on network device &lt;interface&gt;
                                  (e.g., eth0). If not specified,
                                  defaults to the first interface found.
 
--r                               Read packets from <file> (tcpdump format).
+-r                               Read packets from &lt;file&gt; (tcpdump format).
 
 -s                               Keep only packets that contain
-                                 <string> in their payload.
+                                 &lt;string&gt; in their payload.
 
 expression                       A BPF filter that specifies which
                                  packets will be dumped. If no filter is
                                  given, all packets seen on the interface
                                  (or contained in the trace) will be
                                  dumped. Otherwise, only packets matching
-                                 <expression> will be dumped.
+                                 &lt;expression&gt; will be dumped.
 </pre>
 
 # Dependencies
