@@ -354,7 +354,8 @@ static void printicmp(const u_char* packet, size_t length) {
     // Now do Specific ICMP stuff
     printf("%s > %s ICMP\n", src, dst);
     // Calculate the size of the full header
-    payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr);
+    payloadlen = length - (sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr));
+    debug("ICMP Payload: %zu\n", payloadlen);
     if (payloadlen > 0) {
         printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr), payloadlen);
     }
