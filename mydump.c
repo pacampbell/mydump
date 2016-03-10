@@ -12,11 +12,11 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <net/ethernet.h>
-#include <netinet/ip_icmp.h>   // icmp header
-#include <netinet/udp.h>       // udp header
-#include <netinet/tcp.h>       // tcp header
-#include <netinet/ip.h>        // ip header
-#include <netinet/in.h>        // sockaddr_in
+#include <netinet/ip_icmp.h>
+#include <netinet/udp.h>
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
+#include <netinet/in.h>
 #include <linux/if.h>
 
 #include "mydump.h"
@@ -215,24 +215,34 @@ static void callback(u_char *args, const struct pcap_pkthdr* pkthdr, const u_cha
     // Extract the time stamp
     char buffer[256];
     time_t ts = pkthdr->ts.tv_sec;
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localtime(&ts));
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S%P", localtime(&ts));
     printf("%s ", buffer);
-
-    struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
-    // Figure out protocol sensitive information
-    switch (iph->protocol) {
-        case TYPE_ICMP:
-            printicmp(packet, pkthdr->len);
-            break;
-        case TYPE_UDP:
-            printudp(packet, pkthdr->len);
-            break;
-        case TYPE_TCP:
-            printtcp(packet, pkthdr->len);
-            break;
-        default:
-            printother(packet, pkthdr->len);
-            break;
+    // Check to see if we have a ipv4 packet
+    struct ethhdr *ehdr = (struct ethhdr *)packet;
+    if (ntohs(ehdr->h_proto) == IPV4) {
+        struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
+        // Figure out protocol sensitive information
+        switch (iph->protocol) {
+            case TYPE_ICMP:
+                printicmp(packet, pkthdr->caplen);
+                break;
+            case TYPE_UDP:
+                printudp(packet, pkthdr->caplen);
+                break;
+            case TYPE_TCP:
+                printtcp(packet, pkthdr->caplen);
+                break;
+            default:
+                printother(packet, pkthdr->caplen);
+                break;
+        }
+    } else {
+        // We have something else like arp, etc.
+        printeth(packet, pkthdr->caplen);
+        // Print a OTHER and a newline
+        printf("OTHER \n");
+        // Print whatever is left
+        printpayload(packet + sizeof(struct ethhdr), pkthdr->caplen - sizeof(struct ethhdr));
     }
 }
 
@@ -248,7 +258,7 @@ static void printeth(const u_char *packet, size_t length) {
         hdr->h_source[4],
         hdr->h_source[5]);
     // Print out the destination mac address
-    printf("%02x:%02x:%02x:%02x:%02x:%02x ",
+    printf("> %02x:%02x:%02x:%02x:%02x:%02x ",
         hdr->h_dest[0],
         hdr->h_dest[1],
         hdr->h_dest[2],
@@ -256,7 +266,7 @@ static void printeth(const u_char *packet, size_t length) {
         hdr->h_dest[4],
         hdr->h_dest[5]);
     // Print out the ethernet type
-    printf("%04x ", ntohs(hdr->h_proto));
+    printf("0x%04x ", ntohs(hdr->h_proto));
     // Print out the packet length
     printf("%5zu ", length);
 }
@@ -307,7 +317,9 @@ static void printudp(const u_char* packet, size_t length) {
     +----------+
     */
     payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct udphdr);
-    printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct udphdr), payloadlen);
+    if (payloadlen > 0) {
+        printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct udphdr), payloadlen);
+    }
 }
 
 static void printtcp(const u_char* packet, size_t length) {
@@ -339,15 +351,23 @@ static void printicmp(const u_char* packet, size_t length) {
     printf("%21s > %21s ICMP\n", src, dst);
     // Calculate the size of the full header
     payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr);
-    printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr), payloadlen);
+    if (payloadlen > 0) {
+        printpayload(packet + sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr), payloadlen);
+    }
 }
 
 static void printother(const u_char* packet, size_t length) {
     char src[32], dst[32];
+    size_t iphdrlen, payloadlen;
     printeth(packet, length);
-    printip(packet, length, src, dst);
+    iphdrlen = printip(packet, length, src, dst);
     // Now do Specific other stuff
     printf("%21s > %21s OTHER\n", src, dst);
+    // Now just print out the raw payload contents
+    payloadlen = length - sizeof(struct ethhdr) + iphdrlen;
+    if (payloadlen > 0) {
+        printpayload(packet + sizeof(struct ethhdr) + iphdrlen, payloadlen);
+    }
 }
 
 static void printpayloadrow(unsigned char *buffer, size_t count) {
@@ -397,27 +417,34 @@ static void printpayload(const u_char* packet, size_t length) {
 static bool searchpacket(const u_char *packet, size_t length, char *search) {
     bool found = false;
     size_t payloadlen;
-    struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
-    size_t hdrlen = (iph->ihl * 4) + sizeof(struct ethhdr);
-    // Make header variables to calculate sizes
-    struct tcphdr *tcphdr = NULL;
-    // Figure out protocol sensitive information
-    switch (iph->protocol) {
-        case TYPE_ICMP:
-            hdrlen += sizeof(struct icmphdr);
-            break;
-        case TYPE_UDP:
-            /* Nothing else needs to be added to the length */
-            hdrlen += sizeof(struct udphdr);
-            break;
-        case TYPE_TCP:
-            tcphdr = (struct tcphdr*)(packet + hdrlen);
-            hdrlen += (tcphdr->doff * 4);
-            break;
-        default:
-            /* Just start scanning bytes from here */
-            break;
+    struct ethhdr *ehdr = (struct ethhdr*) packet;
+    size_t hdrlen = sizeof(struct ethhdr);
+
+    // Check to see if we have an ipv4 packet
+    if (ntohs(ehdr->h_proto) == IPV4) {
+        struct iphdr *iph = (struct iphdr*)(packet + sizeof(struct ethhdr));
+        hdrlen += (iph->ihl * 4);
+        // Look to see if we have one of the 3 types we support
+        struct tcphdr *tcphdr = NULL;
+        // Figure out protocol sensitive information
+        switch (iph->protocol) {
+            case TYPE_ICMP:
+                hdrlen += sizeof(struct icmphdr);
+                break;
+            case TYPE_UDP:
+                /* Nothing else needs to be added to the length */
+                hdrlen += sizeof(struct udphdr);
+                break;
+            case TYPE_TCP:
+                tcphdr = (struct tcphdr*)(packet + hdrlen);
+                hdrlen += (tcphdr->doff * 4);
+                break;
+            default:
+                /* Just start scanning bytes from here */
+                break;
+        }
     }
+
     // Calculate the size of the payload
     payloadlen = length - hdrlen;
     // Check to make sure theres anything left in the packet, otherwise it may be empty

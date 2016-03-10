@@ -2,6 +2,7 @@
 #define MYDUMP_H
 #include <stdio.h>
 
+#define IPV4 0x0800
 #define TYPE_ICMP 1
 #define TYPE_TCP 6
 #define TYPE_UDP 17
