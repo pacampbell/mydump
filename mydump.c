@@ -85,13 +85,13 @@ int main(int argc, char *argv[]) {
         // NOP
     } else {
         error("Too many positional arguments provided.\n");
-        error("Expected 1 BPF filter but found %d positional argument(s).\n", argc - optind);
+        error("Expected 1 BPF filter but found %d positional arguments.\n", argc - optind);
         return EXIT_FAILURE;
     }
 
     // Do some basic logging for debug
     debug("Search String: %s\n", searchstring);
-    debug("Expression: %s\n", expression);
+    debug("BPF Expression: %s\n", expression);
 
     // Set up to capture
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -240,10 +240,12 @@ static void callback(u_char *args, const struct pcap_pkthdr* pkthdr, const u_cha
         // We have something else like arp, etc.
         printeth(packet, pkthdr->caplen);
         // Print a OTHER and a newline
-        printf("OTHER \n");
+        printf("OTHER\n");
         // Print whatever is left
         printpayload(packet + sizeof(struct ethhdr), pkthdr->caplen - sizeof(struct ethhdr));
     }
+    // Make a gap for the next packet
+    printf("\n");
 }
 
 static void printeth(const u_char *packet, size_t length) {
@@ -268,7 +270,9 @@ static void printeth(const u_char *packet, size_t length) {
     // Print out the ethernet type
     printf("0x%04x ", ntohs(hdr->h_proto));
     // Print out the packet length
-    printf("%5zu ", length);
+    printf("%5zu", length);
+    // Print out a newline to force rest of output on next line
+    printf("\n");
 }
 
 static size_t printip(const u_char *packet, size_t length, char *srcip, char *destip) {
@@ -302,7 +306,7 @@ static void printudp(const u_char* packet, size_t length) {
     iphdrlen = printip(packet, length, src, dst);
     // Now do Specific udp stuff
     struct udphdr *udph = (struct udphdr*)(packet + iphdrlen  + sizeof(struct ethhdr));
-    printf("%15s:%5u > %15s:%5u UDP\n", src, udph->source, dst, udph->dest);
+    printf("%s:%u > %s:%u UDP\n", src, udph->source, dst, udph->dest);
     // Now dump the payload
     /*
     UDP Layers
@@ -331,7 +335,7 @@ static void printtcp(const u_char* packet, size_t length) {
     // Get port information from tcp packet
     struct tcphdr *tcph = (struct tcphdr*)(packet + iphdrlen + sizeof(struct ethhdr));
     // Now do Specific tcp stuff
-    printf("%15s:%5u > %15s:%5u TCP\n", src, tcph->source, dst, tcph->dest);
+    printf("%s:%u > %s:%u TCP\n", src, tcph->source, dst, tcph->dest);
     // Calculate the size of the full heade to reach the payload
     hdrlen = sizeof(struct ethhdr) + iphdrlen + tcph->doff * 4;
     // Now dump the payload
@@ -348,7 +352,7 @@ static void printicmp(const u_char* packet, size_t length) {
     // Print the ip layer, and get its size
     iphdrlen = printip(packet, length, src, dst);
     // Now do Specific ICMP stuff
-    printf("%21s > %21s ICMP\n", src, dst);
+    printf("%s > %s ICMP\n", src, dst);
     // Calculate the size of the full header
     payloadlen = length - sizeof(struct ethhdr) + iphdrlen + sizeof(struct icmphdr);
     if (payloadlen > 0) {
@@ -362,7 +366,7 @@ static void printother(const u_char* packet, size_t length) {
     printeth(packet, length);
     iphdrlen = printip(packet, length, src, dst);
     // Now do Specific other stuff
-    printf("%21s > %21s OTHER\n", src, dst);
+    printf("%s > %s OTHER\n", src, dst);
     // Now just print out the raw payload contents
     payloadlen = length - sizeof(struct ethhdr) + iphdrlen;
     if (payloadlen > 0) {
@@ -451,8 +455,6 @@ static bool searchpacket(const u_char *packet, size_t length, char *search) {
     if (payloadlen == 0) {
         // debug("No payload to scan, skipping\n");
         return found;
-    } else {
-        debug("Payload length is: %zu\n", payloadlen);
     }
 
     // Finally search for the payload string
